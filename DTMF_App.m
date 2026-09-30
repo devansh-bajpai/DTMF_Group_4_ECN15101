@@ -339,3 +339,148 @@ classdef DTMF_App < matlab.apps.AppBase
             app.UIFigure.SizeChangedFcn = @(~,~) app.resizeLayout();
             app.resizeLayout();
         end
+
+        function resizeLayout(app)
+            % Preserve usable keypad/plot sizes; scroll on smaller screens.
+            position = app.UIFigure.Position;
+            bodyHeight = max(470, position(4)-312);
+            app.MainGrid.RowHeight = {60, bodyHeight, 160, 24};
+
+            availableWidth = position(3)-32;
+            if position(4) < 782
+                availableWidth = availableWidth-20; % Scrollbar space.
+            end
+            app.MainGrid.ColumnWidth = {max(900, availableWidth)};
+        end
+
+        function padButtonPushed(app, button)
+            r = button.UserData.Row;
+            c = button.UserData.Column;
+            app.CurrentKey = app.KeyMap(r,c);
+            app.PressedLabel.Text = app.CurrentKey;
+
+            if ~isempty(app.ActiveButton) && isvalid(app.ActiveButton)
+                app.ActiveButton.BackgroundColor = ...
+                    app.ActiveButton.UserData.Color;
+            end
+            app.ActiveButton = button;
+            button.BackgroundColor = [0.12 0.44 0.85];
+
+            % 1. Synthesis: exactly 800 samples, no duplicate endpoint.
+            L = round(app.Fs * app.ToneDuration);
+            app.Time = (0:L-1)' / app.Fs;
+
+            app.CleanTone = ...
+                sin(2*pi*app.LowFrequencies(r)*app.Time) + ...
+                sin(2*pi*app.HighFrequencies(c)*app.Time);
+
+            % Independent unit-variance Gaussian noise per keypress.
+            % Reuse this realization during slider motion for comparison.
+            app.UnitNoise = randn(L,1);
+            result = app.refreshAnalysis(app.SNRSlider.Value);
+
+            % Only keypresses append history.
+            % Slider changes and replay never duplicate the sequence.
+            app.DecodedSequence = [app.DecodedSequence result.Key];
+            app.DecodedSequence = app.DecodedSequence( ...
+                max(1, numel(app.DecodedSequence)-199):end);
+            app.SequenceField.Value = app.DecodedSequence;
+
+            row = {datestr(now, 'HH:MM:SS'), ...
+                app.CurrentKey, result.Key, ...
+                round(app.SNRSlider.Value,1), ...
+                round(result.PeaksHz(1),1), ...
+                round(result.PeaksHz(2),1), result.Reason};
+
+            app.History = [row; app.History];
+            app.History = app.History(1:min(100,size(app.History,1)),:);
+            app.LogTable.Data = app.History;
+
+            app.ReplayButton.Enable = 'on';
+            app.playTone();
+        end
+
+        function snrChanged(app, snrDB)
+            % event.Value is live even before the mouse is released.
+            app.SNRValueLabel.Text = sprintf('%.1f dB', snrDB);
+
+            if ~isempty(app.CleanTone)
+                app.refreshAnalysis(snrDB);
+            end
+        end
+
+        function result = refreshAnalysis(app, snrDB)
+            % 2. AWGN: SNR = 10*log10(Psignal/Pnoise).
+            % Scale randn by sqrt(Pnoise); no awgn() toolbox dependency.
+            signalPower = mean(app.CleanTone.^2);
+            noisePower = signalPower / 10^(snrDB/10);
+            noise = sqrt(noisePower) * app.UnitNoise;
+            app.ReceivedTone = app.CleanTone + noise;
+
+            % Finite-frame measured SNR fluctuates around the target.
+            measuredSNR = 10*log10( ...
+                signalPower / max(mean(noise.^2), realmin));
+
+            app.SNRValueLabel.Text = sprintf('%.1f dB', snrDB);
+            app.MeasuredSNRLabel.Text = ...
+                sprintf('Measured SNR: %.1f dB', measuredSNR);
+
+            % Decode only noisy samples; never pass the pressed key.
+            result = app.decodeDTMF(app.ReceivedTone);
+            app.DecodedLabel.Text = result.Key;
+
+            if result.Valid
+                app.DecodedLabel.FontColor = [0.02 0.48 0.35];
+
+                app.StatusLabel.Text = sprintf( ...
+                    'Decoded %s | Peaks %.1f + %.1f Hz | Peak/floor %.1f / %.1f dB', ...
+                    result.Key, result.PeaksHz(1), result.PeaksHz(2), ...
+                    result.MarginDB(1), result.MarginDB(2));
+            else
+                app.DecodedLabel.FontColor = [0.80 0.28 0.08];
+                app.StatusLabel.Text = ['Uncertain: ' result.Reason];
+            end
+            app.StatusLabel.Tooltip = app.StatusLabel.Text;
+
+            % Update existing graphics objects for smooth interaction.
+            set(app.CleanLine, ...
+                'XData', 1000*app.Time, 'YData', app.CleanTone);
+
+            set(app.ReceivedLine, ...
+                'XData', 1000*app.Time, 'YData', app.ReceivedTone);
+
+            timeLimit = max(2.2, 1.1*max(abs(app.ReceivedTone)));
+            ylim(app.TimeAxes, [-timeLimit timeLimit]);
+            title(app.TimeAxes, ...
+                sprintf('Time domain | Target SNR %.1f dB', snrDB));
+
+            set(app.SpectrumLine, ...
+                'XData', result.Frequency, 'YData', result.Magnitude);
+
+            set(app.PeakMarkers, ...
+                'XData', result.PeaksHz, ...
+                'YData', result.PeakAmplitude);
+
+            f = result.PeaksHz;
+            a = result.PeakAmplitude;
+            set(app.PeakStems, ...
+                'XData', [f(1) f(1) NaN f(2) f(2)], ...
+                'YData', [0 a(1) NaN 0 a(2)]);
+
+            yTop = max(0.1, ...
+                1.35*max(result.Magnitude(result.Frequency <= 2000)));
+            ylim(app.SpectrumAxes, [0 yTop]);
+
+            set(app.LowPeakText, ...
+                'Position', [f(1) a(1)+0.04*yTop 0], ...
+                'String', sprintf('L %.1f Hz', f(1)));
+
+            set(app.HighPeakText, ...
+                'Position', [f(2) a(2)+0.04*yTop 0], ...
+                'String', sprintf('H %.1f Hz', f(2)));
+
+            title(app.SpectrumAxes, ...
+                'Single-sided FFT | Hann window | Red: detected peaks');
+
+            drawnow limitrate nocallbacks
+        end
