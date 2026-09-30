@@ -588,3 +588,79 @@ classdef DTMF_App < matlab.apps.AppBase
                 result.Reason = 'Accepted';
             end
         end
+
+        function playTone(app)
+            if isempty(app.ReceivedTone) || ~app.AudioCheckBox.Value
+                return
+            end
+
+            % Play the received signal so channel noise is audible.
+            % A 5 ms audio-only fade reduces boundary clicks.
+            % The decoder still analyzes the complete original frame.
+            audio = app.ReceivedTone;
+            K = min(round(0.005*app.Fs), floor(numel(audio)/2));
+            ramp = linspace(0,1,K)';
+
+            audio(1:K) = audio(1:K).*ramp;
+            audio(end-K+1:end) = ...
+                audio(end-K+1:end).*flipud(ramp);
+
+            try
+                % Base MATLAB playback with automatic amplitude scaling.
+                soundsc(audio, app.Fs, 16);
+                app.AudioStatusLabel.Text = 'Audio enabled';
+                app.AudioStatusLabel.Tooltip = '';
+
+            catch exception
+                % Preserve decoding and plotting without an audio device.
+                app.AudioCheckBox.Value = false;
+                app.AudioStatusLabel.Text = 'Audio unavailable';
+                app.AudioStatusLabel.Tooltip = exception.message;
+            end
+        end
+
+        function audioChanged(app)
+            if app.AudioCheckBox.Value
+                app.AudioStatusLabel.Text = 'Audio enabled';
+            else
+                app.AudioStatusLabel.Text = 'Audio muted';
+            end
+            app.AudioStatusLabel.Tooltip = '';
+        end
+
+        function clearHistory(app)
+            app.DecodedSequence = '';
+            app.History = cell(0,7);
+            app.SequenceField.Value = '';
+            app.LogTable.Data = app.History;
+
+            app.StatusLabel.Text = ...
+                'History cleared. Press a key to start a new sequence.';
+            app.StatusLabel.Tooltip = app.StatusLabel.Text;
+        end
+    end
+
+    methods (Access = public)
+        function app = DTMF_App
+            try
+                app.createComponents();
+                registerApp(app, app.UIFigure);
+                app.UIFigure.Visible = 'on';
+
+            catch exception
+                delete(app);
+                rethrow(exception);
+            end
+
+            if nargout == 0
+                clear app
+            end
+        end
+
+        function delete(app)
+            if ~isempty(app.UIFigure) && isvalid(app.UIFigure)
+                delete(app.UIFigure);
+            end
+        end
+    end
+end
