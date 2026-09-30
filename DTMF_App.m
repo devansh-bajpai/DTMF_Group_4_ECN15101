@@ -165,3 +165,75 @@ classdef DTMF_App < matlab.apps.AppBase
                         @(source,~) app.padButtonPushed(source);
                 end
             end
+
+            label = uilabel(cg, 'Text', 'CHANNEL SNR', ...
+                'FontWeight', 'bold', 'FontColor', ink);
+            label.Layout.Row = 4;
+            label.Layout.Column = 1;
+
+            app.SNRValueLabel = uilabel(cg, 'Text', '20.0 dB', ...
+                'HorizontalAlignment', 'right', 'FontWeight', 'bold', ...
+                'FontColor', [0.12 0.40 0.78]);
+            app.SNRValueLabel.Layout.Row = 4;
+            app.SNRValueLabel.Layout.Column = 2;
+
+            app.SNRSlider = uislider(cg, 'Limits', [0 30], 'Value', 20, ...
+                'MajorTicks', 0:5:30, 'MinorTicks', [], 'FontColor', ink);
+            app.SNRSlider.Layout.Row = 5;
+            app.SNRSlider.Layout.Column = [1 2];
+            app.SNRSlider.Tooltip = ...
+                'Drag to re-analyze the current tone. Replay to hear it.';
+
+            app.SNRSlider.ValueChangingFcn = ...
+                @(~,event) app.snrChanged(event.Value);
+            app.SNRSlider.ValueChangedFcn = ...
+                @(~,event) app.snrChanged(event.Value);
+
+            app.MeasuredSNRLabel = uilabel(cg, ...
+                'Text', 'Measured SNR: -- dB', 'FontColor', muted);
+            app.MeasuredSNRLabel.Layout.Row = 6;
+            app.MeasuredSNRLabel.Layout.Column = [1 2];
+
+            app.AudioCheckBox = uicheckbox(cg, 'Text', 'Play audio', ...
+                'Value', true, 'FontColor', ink, ...
+                'ValueChangedFcn', @(~,~) app.audioChanged());
+            app.AudioCheckBox.Layout.Row = 7;
+            app.AudioCheckBox.Layout.Column = 1;
+
+            app.ReplayButton = uibutton(cg, 'push', 'Text', 'Replay tone', ...
+                'Enable', 'off', 'BackgroundColor', background, ...
+                'FontColor', ink, 'ButtonPushedFcn', @(~,~) app.playTone());
+            app.ReplayButton.Layout.Row = 7;
+            app.ReplayButton.Layout.Column = 2;
+
+            plots = uipanel(body, 'Title', 'SIGNAL ANALYSIS', ...
+                'FontWeight', 'bold', 'BackgroundColor', navy, ...
+                'ForegroundColor', light);
+            plots.Layout.Column = 2;
+
+            pg = uigridlayout(plots, [2 1]);
+            pg.RowHeight = {'1x', '1x'};
+            pg.BackgroundColor = navy;
+            pg.Padding = [12 8 12 10];
+            pg.RowSpacing = 14;
+
+            app.TimeAxes = uiaxes(pg);
+            app.TimeAxes.Layout.Row = 1;
+            app.SpectrumAxes = uiaxes(pg);
+            app.SpectrumAxes.Layout.Row = 2;
+
+            for ax = [app.TimeAxes app.SpectrumAxes]
+                ax.Color = navy;
+                ax.XColor = light;
+                ax.YColor = light;
+                ax.GridColor = [0.50 0.60 0.72];
+                ax.GridAlpha = 0.20;
+                ax.FontSize = 11;
+                ax.Box = 'off';
+                ax.XGrid = 'on';
+                ax.YGrid = 'on';
+                ax.Title.Color = light;
+                ax.XLabel.Color = light;
+                ax.YLabel.Color = light;
+                hold(ax, 'on');
+            end
