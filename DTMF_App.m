@@ -484,3 +484,107 @@ classdef DTMF_App < matlab.apps.AppBase
 
             drawnow limitrate nocallbacks
         end
+
+        function result = decodeDTMF(app, samples)
+            % Safe rejection defaults for silence or malformed input.
+            f = (0:app.NFFT/2)' * app.Fs/app.NFFT;
+
+            result = struct('Key', '?', 'Valid', false, ...
+                'PeaksHz', [NaN NaN], 'PeakAmplitude', [NaN NaN], ...
+                'MarginDB', [NaN NaN], 'Frequency', f, ...
+                'Magnitude', zeros(size(f)), ...
+                'Reason', 'No usable signal');
+
+            if ~isnumeric(samples) || ~isvector(samples) || ...
+                    ~isreal(samples) || ...
+                    numel(samples) ~= round(app.Fs*app.ToneDuration) || ...
+                    any(~isfinite(samples(:)))
+                return
+            end
+
+            x = double(samples(:));
+            x = x - mean(x); % Remove DC before spectral analysis.
+
+            if max(abs(x)) < 1e-10
+                result.Reason = 'Silence';
+                return
+            end
+
+            % 3. FFT: construct a Hann window to suppress leakage.
+            % Zero-pad the 800 observed samples to 2048 FFT points.
+            % Fs/NFFT = 3.90625 Hz is BIN SPACING. Zero padding does
+            % not improve the resolving power of the 100 ms frame.
+            L = numel(x);
+            window = 0.5 - 0.5*cos(2*pi*(0:L-1)'/(L-1));
+            Y = fft(x .* window, app.NFFT);
+
+            % Correct amplitude normalization uses the window sum,
+            % rather than the zero-padded FFT length.
+            magnitude = abs(Y(1:app.NFFT/2+1)) / sum(window);
+
+            % Single-sided spectrum: double positive-frequency bins,
+            % except DC and the Nyquist bin.
+            magnitude(2:end-1) = 2*magnitude(2:end-1);
+            result.Magnitude = magnitude;
+
+            % 4. Peak picking within the specified frequency bands.
+            % Maximizing magnitude also maximizes squared magnitude.
+            lowBins = find(f >= 600 & f <= 1000);
+            highBins = find(f >= 1200 & f <= 1700);
+
+            [pLow, iLow] = max(magnitude(lowBins));
+            [pHigh, iHigh] = max(magnitude(highBins));
+
+            detectedLow = f(lowBins(iLow));
+            detectedHigh = f(highBins(iHigh));
+
+            result.PeaksHz = [detectedLow detectedHigh];
+            result.PeakAmplitude = [pLow pHigh];
+
+            % 5. Match peaks to the nearest nominal row and column.
+            [errorLow, r] = ...
+                min(abs(app.LowFrequencies - detectedLow));
+            [errorHigh, c] = ...
+                min(abs(app.HighFrequencies - detectedHigh));
+
+            % 6. Estimate background outside each peak's main lobe.
+            lowBackground = magnitude( ...
+                lowBins(abs(f(lowBins)-detectedLow) > 30));
+            highBackground = magnitude( ...
+                highBins(abs(f(highBins)-detectedHigh) > 30));
+
+            floorLow = max(median(lowBackground), eps);
+            floorHigh = max(median(highBackground), eps);
+
+            result.MarginDB = ...
+                20*log10([pLow/floorLow pHigh/floorHigh]);
+
+            balanceDB = ...
+                20*log10(max(pHigh,eps)/max(pLow,eps));
+
+            % Conservative demonstration checks:
+            %   - Frequency error <= 1.5% of nominal.
+            %   - Both peaks >= 14 dB above their background.
+            %   - Relative tone amplitude imbalance <= 6 dB.
+            %
+            % These are not a complete telecom compliance validator.
+            % Even at 0 dB input SNR, a full 800-sample frame usually
+            % produces clear spectral peaks. Reject uncertain frames
+            % with '?' instead of forcing an arbitrary key.
+            if errorLow > 0.015*app.LowFrequencies(r) || ...
+                    errorHigh > 0.015*app.HighFrequencies(c)
+
+                result.Reason = 'Peak outside DTMF tolerance';
+
+            elseif any(result.MarginDB < 14)
+                result.Reason = 'Peaks too weak above noise';
+
+            elseif abs(balanceDB) > 6
+                result.Reason = 'Unbalanced or missing tone';
+
+            else
+                result.Key = app.KeyMap(r,c);
+                result.Valid = true;
+                result.Reason = 'Accepted';
+            end
+        end
