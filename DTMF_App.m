@@ -30,3 +30,22 @@ classdef DTMF_App < matlab.apps.AppBase
                   '7' '8' '9' 'C'; ...
                   '*' '0' '#' 'D']
     end
+
+    properties (Access = private)
+        Time = []
+        CleanTone = []
+        UnitNoise = []
+        ReceivedTone = []
+        CurrentKey = ''
+        DecodedSequence = ''
+        History = cell(0, 7)
+        MainGrid
+        ActiveButton = []
+        CleanLine
+        ReceivedLine
+        SpectrumLine
+        PeakMarkers
+        PeakStems
+        LowPeakText
+        HighPeakText
+    end
