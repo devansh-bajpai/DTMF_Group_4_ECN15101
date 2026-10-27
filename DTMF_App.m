@@ -17,6 +17,14 @@ classdef DTMF_App < matlab.apps.AppBase
         AudioStatusLabel
         AudioCheckBox
         ReplayButton
+        UploadAudioButton
+        AudioFileLabel
+        FileResultField
+        FileStatusLabel
+        MicRecordButton
+        MicDurationDropDown
+        MicResultField
+        MicStatusLabel
     end
 
     properties (Constant, Access = private)
@@ -48,6 +56,7 @@ classdef DTMF_App < matlab.apps.AppBase
         PeakStems
         LowPeakText
         HighPeakText
+        MicRecorder = []
     end
 
     methods (Access = private)
@@ -72,10 +81,10 @@ classdef DTMF_App < matlab.apps.AppBase
                 'AutoResizeChildren', 'off');
             app.UIFigure.CloseRequestFcn = @(~,~) delete(app);
 
-            root = uigridlayout(app.UIFigure, [4 1]);
+            root = uigridlayout(app.UIFigure, [6 1]);
             app.MainGrid = root;
             root.Scrollable = 'on';
-            root.RowHeight = {60, '1x', 160, 24};
+            root.RowHeight = {60, '1x', 160, 180, 150, 24};
             root.ColumnWidth = {'1x'};
             root.Padding = [16 16 16 16];
             root.RowSpacing = 12;
@@ -323,8 +332,80 @@ classdef DTMF_App < matlab.apps.AppBase
             app.LogTable.Tooltip = ...
                 'Newest first. SNR is the requested channel SNR. Latest 100 rows retained.';
 
+            filePanel = uipanel(root, 'Title', 'AUDIO FILE DTMF DECODER', ...
+                'FontWeight', 'bold', 'ForegroundColor', ink, ...
+                'BackgroundColor', [1 1 1]);
+            filePanel.Layout.Row = 4;
+            fg = uigridlayout(filePanel, [4 2]);
+            fg.RowHeight = {32, 32, 22, 22};
+            fg.ColumnWidth = {150, '1x'};
+            fg.Padding = [10 8 10 8];
+            fg.BackgroundColor = [1 1 1];
+
+            app.UploadAudioButton = uibutton(fg, 'push', ...
+                'Text', 'Upload audio file', ...
+                'Interruptible', 'off', 'BusyAction', 'cancel', ...
+                'ButtonPushedFcn', @(~,~) app.uploadAudioFile());
+            app.UploadAudioButton.Layout.Row = 1;
+            app.UploadAudioButton.Layout.Column = 1;
+            app.AudioFileLabel = uilabel(fg, 'Text', 'No file selected', ...
+                'Interpreter', 'none', 'FontColor', ink);
+            app.AudioFileLabel.Layout.Row = 1;
+            app.AudioFileLabel.Layout.Column = 2;
+            label = uilabel(fg, 'Text', 'Detection result', 'FontColor', ink);
+            label.Layout.Row = 2; label.Layout.Column = 1;
+            app.FileResultField = uieditfield(fg, 'text', 'Editable', 'off', ...
+                'FontName', 'Consolas', 'FontSize', 16);
+            app.FileResultField.Layout.Row = 2;
+            app.FileResultField.Layout.Column = 2;
+            app.FileStatusLabel = uilabel(fg, 'Text', ...
+                'Choose an audio file to detect its DTMF keys.', 'FontColor', muted);
+            app.FileStatusLabel.Layout.Row = 3;
+            app.FileStatusLabel.Layout.Column = [1 2];
+            label = uilabel(fg, 'Text', ...
+                'Results list keys in playback order. Use clear tones of about 100 ms or longer, separated by pauses.', ...
+                'FontSize', 11, 'FontColor', muted);
+            label.Layout.Row = 4; label.Layout.Column = [1 2];
+
+            micPanel = uipanel(root, 'Title', 'MICROPHONE DTMF DECODER', ...
+                'FontWeight', 'bold', 'ForegroundColor', ink, ...
+                'BackgroundColor', [1 1 1]);
+            micPanel.Layout.Row = 5;
+            mg = uigridlayout(micPanel, [3 3]);
+            mg.RowHeight = {32, 32, 22};
+            mg.ColumnWidth = {150, 130, '1x'};
+            mg.Padding = [10 8 10 8];
+            mg.BackgroundColor = [1 1 1];
+            app.MicRecordButton = uibutton(mg, 'push', ...
+                'Text', 'Record', ...
+                'Interruptible', 'off', 'BusyAction', 'cancel', ...
+                'ButtonPushedFcn', @(~,~) app.recordMicrophone());
+            app.MicRecordButton.Layout.Row = 1;
+            app.MicRecordButton.Layout.Column = 1;
+            app.MicDurationDropDown = uidropdown(mg, ...
+                'Items', {'5 seconds', '10 seconds', '15 seconds'}, ...
+                'ItemsData', [5 10 15], 'Value', 5, ...
+                'Tooltip', 'Recording duration');
+            app.MicDurationDropDown.Layout.Row = 1;
+            app.MicDurationDropDown.Layout.Column = 2;
+            app.MicStatusLabel = uilabel(mg, 'Text', ...
+                'Ready. Click Record, then play a phone dial-pad tone.', ...
+                'FontColor', muted);
+            app.MicStatusLabel.Layout.Row = 1;
+            app.MicStatusLabel.Layout.Column = 3;
+            label = uilabel(mg, 'Text', 'Detection result', 'FontColor', ink);
+            label.Layout.Row = 2; label.Layout.Column = 1;
+            app.MicResultField = uieditfield(mg, 'text', 'Editable', 'off', ...
+                'FontName', 'Consolas', 'FontSize', 16);
+            app.MicResultField.Layout.Row = 2;
+            app.MicResultField.Layout.Column = [2 3];
+            label = uilabel(mg, 'Text', ...
+                'Uses the default microphone. Enable phone dial-pad sounds; avoid app playback during recording.', ...
+                'FontSize', 11, 'FontColor', muted);
+            label.Layout.Row = 3; label.Layout.Column = [1 3];
+
             footer = uigridlayout(root, [1 2]);
-            footer.Layout.Row = 4;
+            footer.Layout.Row = 6;
             footer.ColumnWidth = {'1x', 150};
             footer.Padding = [0 0 0 0];
             footer.BackgroundColor = background;
@@ -343,11 +424,11 @@ classdef DTMF_App < matlab.apps.AppBase
         function resizeLayout(app)
             % Preserve usable keypad/plot sizes; scroll on smaller screens.
             position = app.UIFigure.Position;
-            bodyHeight = max(470, position(4)-312);
-            app.MainGrid.RowHeight = {60, bodyHeight, 160, 24};
+            bodyHeight = max(470, position(4)-666);
+            app.MainGrid.RowHeight = {60, bodyHeight, 160, 180, 150, 24};
 
             availableWidth = position(3)-32;
-            if position(4) < 782
+            if position(4) < 1136
                 availableWidth = availableWidth-20; % Scrollbar space.
             end
             app.MainGrid.ColumnWidth = {max(900, availableWidth)};
@@ -485,9 +566,18 @@ classdef DTMF_App < matlab.apps.AppBase
             drawnow limitrate nocallbacks
         end
 
-        function result = decodeDTMF(app, samples)
+        function result = decodeDTMF(app, samples, sampleRate)
             % Safe rejection defaults for silence or malformed input.
-            f = (0:app.NFFT/2)' * app.Fs/app.NFFT;
+            % Default settings preserve the generator's original analysis.
+            if nargin < 3
+                sampleRate = app.Fs;
+                fftLength = app.NFFT;
+            else
+                % Analyze uploaded audio at its native rate, without resampling
+                % or a Signal Processing Toolbox dependency.
+                fftLength = 2^nextpow2(sampleRate*app.NFFT/app.Fs);
+            end
+            f = (0:fftLength/2)' * sampleRate/fftLength;
 
             result = struct('Key', '?', 'Valid', false, ...
                 'PeaksHz', [NaN NaN], 'PeakAmplitude', [NaN NaN], ...
@@ -497,7 +587,7 @@ classdef DTMF_App < matlab.apps.AppBase
 
             if ~isnumeric(samples) || ~isvector(samples) || ...
                     ~isreal(samples) || ...
-                    numel(samples) ~= round(app.Fs*app.ToneDuration) || ...
+                    numel(samples) ~= round(sampleRate*app.ToneDuration) || ...
                     any(~isfinite(samples(:)))
                 return
             end
@@ -511,16 +601,16 @@ classdef DTMF_App < matlab.apps.AppBase
             end
 
             % 3. FFT: construct a Hann window to suppress leakage.
-            % Zero-pad the 800 observed samples to 2048 FFT points.
+            % At 8 kHz, zero-pad 800 observed samples to 2048 FFT points.
             % Fs/NFFT = 3.90625 Hz is BIN SPACING. Zero padding does
             % not improve the resolving power of the 100 ms frame.
             L = numel(x);
             window = 0.5 - 0.5*cos(2*pi*(0:L-1)'/(L-1));
-            Y = fft(x .* window, app.NFFT);
+            Y = fft(x .* window, fftLength);
 
             % Correct amplitude normalization uses the window sum,
             % rather than the zero-padded FFT length.
-            magnitude = abs(Y(1:app.NFFT/2+1)) / sum(window);
+            magnitude = abs(Y(1:fftLength/2+1)) / sum(window);
 
             % Single-sided spectrum: double positive-frequency bins,
             % except DC and the Nyquist bin.
@@ -586,6 +676,177 @@ classdef DTMF_App < matlab.apps.AppBase
                 result.Key = app.KeyMap(r,c);
                 result.Valid = true;
                 result.Reason = 'Accepted';
+            end
+        end
+
+        function uploadAudioFile(app)
+            [name, folder] = uigetfile( ...
+                {'*.wav;*.mp3;*.flac;*.m4a;*.ogg;*.aif;*.aiff;*.au', ...
+                 'Audio files'; '*.*', 'All files'}, 'Select DTMF audio file');
+            if isequal(name, 0)
+                return % Cancel keeps the previous result.
+            end
+            app.UploadAudioButton.Enable = 'off';
+            app.AudioFileLabel.Text = name;
+            app.AudioFileLabel.Tooltip = fullfile(folder, name);
+            app.FileResultField.Value = '';
+            app.FileStatusLabel.Text = 'Reading and analyzing audio...';
+            app.FileStatusLabel.Tooltip = '';
+            drawnow nocallbacks
+            try
+                [samples, sampleRate] = audioread(fullfile(folder, name));
+                if isempty(samples) || any(~isfinite(samples(:)))
+                    error('DTMF_App:InvalidAudio', 'The file contains no usable audio samples.');
+                end
+                if sampleRate < 4000
+                    error('DTMF_App:LowSampleRate', ...
+                        'The audio sample rate must be at least 4000 Hz.');
+                end
+                sequence = app.decodeAudioFile(samples, sampleRate);
+                if isempty(sequence)
+                    message = 'No key detected';
+                else
+                    message = ['Detected key(s): ' sequence];
+                end
+                app.FileResultField.Value = message;
+                app.FileStatusLabel.Text = sprintf( ...
+                    'Analysis complete | %.2f seconds | %d Hz | %d key(s) detected', ...
+                    size(samples,1)/sampleRate, sampleRate, numel(sequence));
+                fprintf('%s\n', message);
+            catch exception
+                app.FileResultField.Value = 'Unable to analyze audio file';
+                app.FileStatusLabel.Text = 'Could not read or analyze this file. See the status tooltip for details.';
+                app.FileStatusLabel.Tooltip = exception.message;
+            end
+            app.UploadAudioButton.Enable = 'on';
+        end
+
+        function sequence = decodeAudioFile(app, samples, sampleRate)
+            % Overlapping windows find tones anywhere in the recording.
+            % Pad both boundaries so a short clip or final tone is not skipped.
+            frameLength = round(sampleRate*app.ToneDuration);
+            hop = max(1, round(0.025*sampleRate));
+            padding = zeros(floor(frameLength/2), size(samples,2));
+            samples = [padding; samples; padding];
+            sequence = '';
+            lastKey = '';
+            quietFrames = 0;
+            for first = 1:hop:size(samples,1)-frameLength+1
+                frame = samples(first:first+frameLength-1,:);
+                frame = bsxfun(@minus, frame, mean(frame,1));
+                % Select the strongest channel per frame rather than averaging:
+                % opposite-phase stereo tones must not cancel each other out.
+                [power, channel] = max(mean(frame.^2,1));
+                result = app.decodeDTMF(frame(:,channel), sampleRate);
+                spectralPower = result.Magnitude.^2;
+                nearPair = abs(result.Frequency-result.PeaksHz(1)) <= 30 | ...
+                    abs(result.Frequency-result.PeaksHz(2)) <= 30;
+                concentration = sum(spectralPower(nearPair))/ ...
+                    max(sum(spectralPower), eps);
+                valid = result.Valid && power >= 1e-8 && concentration >= 0.65;
+                if valid
+                    quietFrames = 0;
+                    if ~strcmp(lastKey, result.Key)
+                        sequence = [sequence result.Key]; %#ok<AGROW>
+                        lastKey = result.Key;
+                    end
+                else
+                    quietFrames = quietFrames+1;
+                    if quietFrames >= 3
+                        lastKey = ''; % A pause allows a repeated key.
+                    end
+                end
+                if mod(first-1, 40*hop) == 0
+                    drawnow limitrate nocallbacks
+                end
+            end
+        end
+
+        function recordMicrophone(app)
+            if ~isempty(app.MicRecorder)
+                return % Ignore another click while recording or processing.
+            end
+            duration = app.MicDurationDropDown.Value;
+            app.MicDurationDropDown.Enable = 'off';
+            app.MicRecordButton.Enable = 'off';
+            app.MicRecordButton.Text = 'Recording...';
+            app.MicResultField.Value = '';
+            app.MicStatusLabel.Text = sprintf( ...
+                'Recording for %d seconds. Play your tone now...', duration);
+            app.MicStatusLabel.Tooltip = '';
+            drawnow nocallbacks
+            try
+                % Complete capture here instead of relying on a queued StopFcn
+                % to advance the UI. Silence never extends the recording time.
+                recorder = audiorecorder(44100, 16, 1);
+                app.MicRecorder = recorder;
+                recordblocking(recorder, duration);
+                stop(recorder); % Explicitly stop before reading or decoding.
+                if ~isvalid(app)
+                    return
+                end
+                app.microphoneRecorded(recorder, duration);
+            catch exception
+                if isvalid(app)
+                    app.microphoneError(exception);
+                end
+            end
+        end
+
+        function microphoneRecorded(app, recorder, duration)
+            if isempty(app.MicRecorder) || ~isequal(recorder, app.MicRecorder)
+                return
+            end
+            app.MicRecordButton.Text = 'Processing...';
+            app.MicStatusLabel.Text = 'Recording stopped. Analyzing audio...';
+            drawnow nocallbacks
+            try
+                sequence = '';
+                if recorder.TotalSamples > 0
+                    samples = getaudiodata(recorder, 'double');
+                    % Only the selected recording duration is analyzed.
+                    samples = samples(1:min(size(samples,1), ...
+                        round(duration*recorder.SampleRate)), :);
+                    sequence = app.decodeAudioFile(samples, recorder.SampleRate);
+                end
+                if isempty(sequence)
+                    message = 'No key detected';
+                else
+                    message = ['Detected key(s): ' sequence];
+                end
+                app.MicResultField.Value = message;
+                fprintf('Microphone: %s\n', message);
+                app.releaseMicrophone();
+                app.MicRecordButton.Text = 'Record';
+                app.MicRecordButton.Enable = 'on';
+                app.MicDurationDropDown.Enable = 'on';
+                app.MicStatusLabel.Text = 'Ready. Click Record to record another key.';
+            catch exception
+                app.microphoneError(exception);
+            end
+        end
+
+        function microphoneError(app, exception)
+            app.releaseMicrophone();
+            app.MicRecordButton.Text = 'Record';
+            app.MicRecordButton.Enable = 'on';
+            app.MicDurationDropDown.Enable = 'on';
+            app.MicResultField.Value = 'Unable to record or analyze microphone audio';
+            app.MicStatusLabel.Text = 'Check microphone permissions/default input, then click Record to retry.';
+            app.MicStatusLabel.Tooltip = exception.message;
+        end
+
+        function releaseMicrophone(app)
+            if ~isempty(app.MicRecorder)
+                recorder = app.MicRecorder;
+                app.MicRecorder = [];
+                % Stop on normal completion, errors, and app closure.
+                recorder.StopFcn = [];
+                try
+                    stop(recorder);
+                catch
+                    % A disconnected device must not prevent app cleanup.
+                end
             end
         end
 
@@ -658,6 +919,7 @@ classdef DTMF_App < matlab.apps.AppBase
         end
 
         function delete(app)
+            app.releaseMicrophone();
             if ~isempty(app.UIFigure) && isvalid(app.UIFigure)
                 delete(app.UIFigure);
             end
